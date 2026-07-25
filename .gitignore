@@ -1,0 +1,63 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Conda / venv ---
+.env
+.venv/
+env/
+venv/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# --- Data (never commit raw/processed data) ---
+data/raw/*
+data/processed/*
+data/interim/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/interim/.gitkeep
+
+# --- Models (never commit trained artifacts) ---
+models/*
+!models/.gitkeep
+
+# --- Kaggle credentials ---
+kaggle.json
+.kaggle/
+
+# --- Reports / generated artifacts ---
+reports/figures/*
+!reports/figures/.gitkeep
+
+# --- MLflow / experiment tracking (if added later) ---
+mlruns/
+mlartifacts/
+
+# --- Docker ---
+*.pid
+
+# --- OS / editor ---
+.DS_Store
+*.swp
+*.swo
+*~
+
+# --- Env secrets ---
+.env
+*.env
+
+# --- Pytest / coverage ---
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Streamlit ---
+.streamlit/secrets.toml

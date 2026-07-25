@@ -1,0 +1,34 @@
+name: fraud-detection
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - pandas
+  - scikit-learn
+  - matplotlib
+  - seaborn
+  - jupyterlab
+  - ipykernel
+  - jupyterlab_widgets
+  - pytest
+  - pip:
+      - catboost
+      - xgboost
+      - lightgbm
+      - imbalanced-learn
+      - optuna
+      - shap
+      - plotly
+      - fastapi
+      - uvicorn[standard]
+      - streamlit
+      - pydantic
+      - pydantic-settings
+      - python-dotenv
+      - joblib
+      - kaggle
+      - httpx
+      - great-expectations==0.18.19
