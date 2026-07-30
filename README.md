@@ -15,6 +15,7 @@ weighting, evaluation metric (PR-AUC over ROC-AUC), and decision threshold.
 ## Dataset
 
 - Source: [Kaggle - Credit Card Fraud Detection (mlg-ulb/creditcardfraud)](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud)
+- Full details: [data/DATASET_CARD.md](data/DATASET_CARD.md)
 - 284,807 transactions, 492 labeled fraud (0.172%)
 - Features `V1`-`V28`: PCA-transformed (anonymized, no domain meaning)
 - Features `Time`, `Amount`: raw
