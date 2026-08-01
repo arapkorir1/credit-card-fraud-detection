@@ -29,3 +29,9 @@ clean:
 
 download-data:
 	python -m src.data
+
+prepare-data:
+	python -c "from src.data import load_raw_data, train_test_split_stratified, save_processed_data; \
+	df = load_raw_data(); \
+	X_train, X_test, y_train, y_test = train_test_split_stratified(df); \
+	save_processed_data(X_train, X_test, y_train, y_test)"
