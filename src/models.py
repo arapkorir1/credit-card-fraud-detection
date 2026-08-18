@@ -13,10 +13,15 @@ Model families covered:
 Provides:
     - get_model(): factory returning an unfitted estimator by name
     - train_model(): fit a given model on (X_train, y_train)
-    - build_optuna_objective() / run_optuna_study(): PR-AUC-optimized tuning
+    - build_optuna_objective() / run_optuna_study(): PR-AUC-optimized tuning,
+      optionally with SMOTE applied inside each CV fold
     - save_model() / load_model(): persistence
+    - save_training_summary(): records which model family/strategy won, so
+      src.predict can load the right artifact format without hardcoding
+      an assumption about which family was chosen
 """
 
+import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -43,7 +48,12 @@ MODEL_REGISTRY = {
 }
 
 
-def get_model(name: str, params: dict | None = None, scale_pos_weight: float | None = None):
+def get_model(
+    name: str,
+    params: dict | None = None,
+    scale_pos_weight: float | None = None,
+    class_weight: str | dict | None = "balanced",
+):
     """
     Factory for an unfitted estimator, with imbalance-aware defaults baked in.
 
@@ -51,18 +61,23 @@ def get_model(name: str, params: dict | None = None, scale_pos_weight: float | N
         name: one of MODEL_REGISTRY.
         params: hyperparameter overrides (e.g. from Optuna's best_params).
         scale_pos_weight: precomputed n_neg/n_pos ratio; used by the
-            boosted-tree families' built-in imbalance handling.
+            boosted-tree families' built-in imbalance handling. Pass 1.0
+            (or leave scale_pos_weight unset and pass nothing) to disable it,
+            e.g. when SMOTE is handling imbalance instead.
+        class_weight: passed to LogisticRegression/RandomForestClassifier.
+            Set to None to disable (e.g. when combining with SMOTE, so
+            imbalance isn't corrected for twice over).
     """
     params = params or {}
 
     if name == "logistic_regression":
         return LogisticRegression(
-            class_weight="balanced", max_iter=1000, random_state=RANDOM_STATE, **params
+            class_weight=class_weight, max_iter=1000, random_state=RANDOM_STATE, **params
         )
 
     if name == "random_forest":
         return RandomForestClassifier(
-            class_weight="balanced", random_state=RANDOM_STATE, n_jobs=-1, **params
+            class_weight=class_weight, random_state=RANDOM_STATE, n_jobs=-1, **params
         )
 
     if name == "xgboost":
@@ -103,17 +118,29 @@ def train_model(name: str, X_train, y_train, params: dict | None = None):
 
 
 def build_optuna_objective(
-    name: str, X: np.ndarray, y: np.ndarray, n_splits: int = 5
+    name: str,
+    X: np.ndarray,
+    y: np.ndarray,
+    n_splits: int = 5,
+    use_smote: bool = False,
+    smote_sampling_strategy: float = 0.1,
 ) -> Callable[[optuna.Trial], float]:
     """
     Build an Optuna objective optimizing mean average precision (PR-AUC)
     across StratifiedKFold CV — PR-AUC, not accuracy/ROC-AUC, is the right
     metric under 0.17% positive-class imbalance.
 
-    Resampling (SMOTE), if used, should happen inside each fold via an
-    imblearn Pipeline in the calling notebook — not here, to avoid leakage.
+    Args:
+        use_smote: if True, SMOTE is applied inside each CV fold via an
+            imblearn Pipeline (fit only on that fold's training portion,
+            never touching the validation portion — avoiding leakage), and
+            the model's own class_weight/scale_pos_weight correction is
+            disabled to avoid double-correcting for imbalance. If False
+            (default), the model's built-in imbalance handling is used
+            instead, and no resampling happens.
     """
-    scale_pos_weight = get_scale_pos_weight(pd.Series(y))
+    scale_pos_weight = 1.0 if use_smote else get_scale_pos_weight(pd.Series(y))
+    class_weight = None if use_smote else "balanced"
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=RANDOM_STATE)
 
     def objective(trial: optuna.Trial) -> float:
@@ -160,18 +187,44 @@ def build_optuna_objective(
         else:
             raise ValueError(f"Unknown model name '{name}'.")
 
-        model = get_model(name, params=params, scale_pos_weight=scale_pos_weight)
-        scores = cross_val_score(model, X, y, cv=cv, scoring="average_precision", n_jobs=1)
+        model = get_model(
+            name, params=params, scale_pos_weight=scale_pos_weight, class_weight=class_weight
+        )
+
+        if use_smote:
+            from imblearn.over_sampling import SMOTE
+            from imblearn.pipeline import Pipeline as ImbPipeline
+
+            estimator = ImbPipeline(
+                [
+                    ("smote", SMOTE(sampling_strategy=smote_sampling_strategy, random_state=RANDOM_STATE)),
+                    ("clf", model),
+                ]
+            )
+        else:
+            estimator = model
+
+        scores = cross_val_score(estimator, X, y, cv=cv, scoring="average_precision", n_jobs=1)
         return float(scores.mean())
 
     return objective
 
 
 def run_optuna_study(
-    name: str, X, y, n_trials: int = 50, n_splits: int = 5, direction: str = "maximize"
+    name: str,
+    X,
+    y,
+    n_trials: int = 50,
+    n_splits: int = 5,
+    direction: str = "maximize",
+    use_smote: bool = False,
+    smote_sampling_strategy: float = 0.1,
 ) -> optuna.Study:
     """Run an Optuna study for a given model family and return the completed study."""
-    objective = build_optuna_objective(name, X, y, n_splits=n_splits)
+    objective = build_optuna_objective(
+        name, X, y, n_splits=n_splits, use_smote=use_smote,
+        smote_sampling_strategy=smote_sampling_strategy,
+    )
     study = optuna.create_study(
         direction=direction, sampler=optuna.samplers.TPESampler(seed=RANDOM_STATE)
     )
@@ -200,3 +253,34 @@ def load_model(path: Path | None = None, model_type: str = "catboost") -> Any:
         model.load_model(str(path))
         return model
     return joblib.load(path)
+
+
+def save_training_summary(
+    model_family: str,
+    strategy: str,
+    best_params: dict,
+    cv_pr_auc: float,
+    model: Any,
+    path: Path | None = None,
+) -> Path:
+    """
+    Persist metadata about the champion model choice: which family won,
+    which imbalance strategy it used, its tuned hyperparameters, its CV
+    PR-AUC, and how it was serialized ("catboost" native format vs
+    "joblib"). src.predict.FraudPredictor reads this to know how to load
+    the model artifact without hardcoding an assumption about which
+    family was chosen.
+    """
+    path = path or (MODELS_DIR / "training_summary.json")
+    saved_as = "catboost" if isinstance(model, CatBoostClassifier) else "joblib"
+    summary = {
+        "model_family": model_family,
+        "strategy": strategy,
+        "best_params": best_params,
+        "cv_pr_auc": cv_pr_auc,
+        "saved_as": saved_as,
+    }
+    with open(path, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"✅ Training summary saved to {path}")
+    return path
