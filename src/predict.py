@@ -7,6 +7,7 @@ what api/main.py (Phase 9) wraps in an HTTP endpoint.
 """
 
 import json
+from pathlib import Path
 from typing import Any
 
 import joblib
@@ -39,8 +40,26 @@ class FraudPredictor:
         model_path=MODEL_FILE,
         preprocessor_path=PREPROCESSOR_FILE,
         threshold_path=THRESHOLD_FILE,
+        summary_path: Path | None = None,
     ) -> "FraudPredictor":
-        model = load_model(model_path, model_type="catboost")
+        """
+        Load the trained artifacts.
+
+        model_type (CatBoost native vs. joblib) is read from
+        training_summary.json (written by src.models.save_training_summary
+        during Phase 7's modeling notebook) rather than assumed, since the
+        winning model family isn't known ahead of time. If no summary file
+        is found alongside model_path (e.g. in older/manually-built
+        artifacts), falls back to "catboost" for backward compatibility.
+        """
+        summary_path = summary_path or (Path(model_path).parent / "training_summary.json")
+        model_type = "catboost"
+        if summary_path.exists():
+            with open(summary_path) as f:
+                summary = json.load(f)
+            model_type = summary.get("saved_as", "catboost")
+
+        model = load_model(model_path, model_type=model_type)
         preprocessor = joblib.load(preprocessor_path)
         with open(threshold_path) as f:
             threshold = json.load(f)["threshold"]
